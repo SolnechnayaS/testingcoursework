@@ -53,6 +53,7 @@ public class UserService implements UserDetailsService {
     accountService.createDefaultAccounts(user);
     return UserDTO.from(user);
   }
+
   @Transactional(readOnly = true)
   public UserDTO getUser(long id) {
     return userRepository.findById(id).map(UserDTO::from).orElseThrow();
