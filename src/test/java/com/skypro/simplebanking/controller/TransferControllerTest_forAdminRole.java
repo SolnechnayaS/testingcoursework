@@ -1,16 +1,17 @@
 package com.skypro.simplebanking.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.skypro.simplebanking.entity.Account;
 import com.skypro.simplebanking.entity.AccountCurrency;
 import com.skypro.simplebanking.entity.User;
 import com.skypro.simplebanking.repository.AccountRepository;
 import com.skypro.simplebanking.repository.UserRepository;
-import org.json.JSONException;
 import org.json.JSONObject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
@@ -18,19 +19,14 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.util.Base64Utils;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.shaded.com.google.common.net.HttpHeaders;
 
-import java.nio.charset.StandardCharsets;
+import javax.sql.DataSource;
 
 import static com.skypro.simplebanking.TestConstants.*;
-import static com.skypro.simplebanking.TestConstants.USERNAME_2;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
@@ -38,7 +34,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 
 @Testcontainers
-class AccountControllerTest {
+class TransferControllerTest_forAdminRole {
+
+    @Autowired
+    private DataSource dataSource;
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -47,6 +47,9 @@ class AccountControllerTest {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Container
     private static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:alpine")
@@ -115,79 +118,23 @@ class AccountControllerTest {
         accountRepository.deleteAll();
     }
 
-    public String autorisationUser(String username, String passwordDecode) {
-        return Base64Utils.encodeToString((username + ":" + passwordDecode).getBytes(StandardCharsets.UTF_8));
-    }
-
-    public Long getAccountIdByUsernameAndCurrency(String username, AccountCurrency currency) {
-        return accountRepository
-                .getAccountByUserId_and_Currency(
-                        userRepository.findByUsername(username).orElseThrow().getId(),
-                        currency.ordinal());
-    }
-
-    public JSONObject balanceChangeRequest (Long amount) throws JSONException {
-        JSONObject balanceChangeRequest = new JSONObject();
-        balanceChangeRequest.put("amount", amount);
-        return balanceChangeRequest;
-    }
+    @Value("${app.security.admin-token}")
+    private String token;
 
     @Test
-    void getUserAccount() throws Exception {
-        String base64Encoded = autorisationUser(USERNAME_1, PASSWORD_1DECODE);
-        mockMvc.perform(get("/account/{id}", 1)
-                        .header(HttpHeaders.AUTHORIZATION, "Basic " + base64Encoded))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.amount").value(10000));
-        mockMvc.perform(get("/account/{id}", 4)
-                        .header(HttpHeaders.AUTHORIZATION, "Basic " + base64Encoded))
-                .andExpect(status().isNotFound());
-    }
+    void transfer() throws Exception {
 
-    @Test
-    void depositToAccount() throws Exception {
-        String base64Encoded = autorisationUser(USERNAME_1, PASSWORD_1DECODE);
-        Long accountRUBuser1 = getAccountIdByUsernameAndCurrency(USERNAME_1,AccountCurrency.RUB);
+        JSONObject transferRequest1 = new JSONObject();
+        transferRequest1.put("fromAccountId", 1);
+        transferRequest1.put("toUserId", 2);
+        transferRequest1.put("toAccountId", 4);
+        transferRequest1.put("amount", 5000);
 
-        JSONObject balanceChangeRequest = balanceChangeRequest(5000L);
-
-        mockMvc.perform(post("/account/deposit/{id}", accountRUBuser1)
-                        .header(HttpHeaders.AUTHORIZATION, "Basic " + base64Encoded)
+        mockMvc.perform(post("/transfer")
+                        .header(ADMIN_KEY, token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(balanceChangeRequest.toString()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.amount").value(15000));
+                        .content(transferRequest1.toString()))
+                .andExpect(status().isForbidden());
 
-        mockMvc.perform(post("/account/deposit/{id}", accountRUBuser1+3) //счет другого пользователя
-                        .header(HttpHeaders.AUTHORIZATION, "Basic " + base64Encoded)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(balanceChangeRequest.toString()))
-                .andExpect(status().isNotFound());
-    }
-    @Test
-    void withdrawFromAccount() throws Exception {
-        String base64Encoded = autorisationUser(USERNAME_1, PASSWORD_1DECODE);
-
-        Long accountRUBuser1 = getAccountIdByUsernameAndCurrency(USERNAME_1,AccountCurrency.RUB);
-        JSONObject balanceChangeRequest = balanceChangeRequest(6000L);
-
-        mockMvc.perform(post("/account/withdraw/{id}", accountRUBuser1)
-                        .header(HttpHeaders.AUTHORIZATION, "Basic " + base64Encoded)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(balanceChangeRequest.toString()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.amount").value(4000));
-
-        mockMvc.perform(post("/account/withdraw/{id}", accountRUBuser1)
-                        .header(HttpHeaders.AUTHORIZATION, "Basic " + base64Encoded)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(balanceChangeRequest.toString()))
-                .andExpect(status().isBadRequest()); //повторно уменьшаем счет, недостаточно средств
-
-        mockMvc.perform(post("/account/withdraw/{id}", accountRUBuser1+3)
-                        .header(HttpHeaders.AUTHORIZATION, "Basic " + base64Encoded)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(balanceChangeRequest.toString()))
-                .andExpect(status().isNotFound());
     }
 }

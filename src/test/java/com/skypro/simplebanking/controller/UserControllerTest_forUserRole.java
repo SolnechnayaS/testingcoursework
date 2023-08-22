@@ -1,7 +1,5 @@
 package com.skypro.simplebanking.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.skypro.simplebanking.TestConstants;
 import com.skypro.simplebanking.entity.Account;
 import com.skypro.simplebanking.entity.AccountCurrency;
 import com.skypro.simplebanking.entity.User;
@@ -12,6 +10,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
@@ -26,14 +25,9 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.shaded.com.google.common.net.HttpHeaders;
 
-import javax.sql.DataSource;
-
 import java.nio.charset.StandardCharsets;
-import java.util.Collection;
-import java.util.List;
 
 import static com.skypro.simplebanking.TestConstants.*;
-import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -44,7 +38,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 
 @Testcontainers
-class UserControllerTest {
+class UserControllerTest_forUserRole {
     @Autowired
     private MockMvc mockMvc;
 
@@ -126,23 +120,18 @@ class UserControllerTest {
     }
 
     @Test
-    @WithMockUser(username = "admin", roles = "ADMIN", password = "****")
     void createUser() throws Exception {
-        cleanData();
+
+        String base64Encoded = autorisationUser(USERNAME_1, PASSWORD_1DECODE);
 
         JSONObject createUserRequest = new JSONObject();
         createUserRequest.put("username", USERNAME_1);
         createUserRequest.put("password", PASSWORD_1DECODE);
 
         mockMvc.perform(post("/user")
+                        .header(HttpHeaders.AUTHORIZATION, "Basic " + base64Encoded)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createUserRequest.toString()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.username").value(USERNAME_1));
-
-        mockMvc.perform(post("/user")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(createUserRequest.toString())) //отправляем повторно только что добавленного юзера
                 .andExpect(status().isBadRequest());
 
     }

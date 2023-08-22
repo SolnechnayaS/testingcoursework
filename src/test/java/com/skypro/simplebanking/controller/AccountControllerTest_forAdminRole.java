@@ -1,16 +1,17 @@
 package com.skypro.simplebanking.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.skypro.simplebanking.entity.Account;
 import com.skypro.simplebanking.entity.AccountCurrency;
 import com.skypro.simplebanking.entity.User;
 import com.skypro.simplebanking.repository.AccountRepository;
 import com.skypro.simplebanking.repository.UserRepository;
+import org.json.JSONException;
 import org.json.JSONObject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
@@ -18,33 +19,26 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.ResultMatcher;
 import org.springframework.util.Base64Utils;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.shaded.com.google.common.net.HttpHeaders;
 
-import javax.sql.DataSource;
 import java.nio.charset.StandardCharsets;
 
 import static com.skypro.simplebanking.TestConstants.*;
-import static com.skypro.simplebanking.TestConstants.USERNAME_2;
-import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
 @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 
 @Testcontainers
-class TransferControllerTest {
-
-    @Autowired
-    private DataSource dataSource;
-
+class AccountControllerTest_forAdminRole {
     @Autowired
     private MockMvc mockMvc;
 
@@ -53,9 +47,6 @@ class TransferControllerTest {
 
     @Autowired
     private UserRepository userRepository;
-
-    @Autowired
-    private ObjectMapper objectMapper;
 
     @Container
     private static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:alpine")
@@ -128,56 +119,49 @@ class TransferControllerTest {
         return Base64Utils.encodeToString((username + ":" + passwordDecode).getBytes(StandardCharsets.UTF_8));
     }
 
+    public Long getAccountIdByUsernameAndCurrency(String username, AccountCurrency currency) {
+        return accountRepository
+                .getAccountByUserId_and_Currency(
+                        userRepository.findByUsername(username).orElseThrow().getId(),
+                        currency.ordinal());
+    }
+
+    public JSONObject balanceChangeRequest (Long amount) throws JSONException {
+        JSONObject balanceChangeRequest = new JSONObject();
+        balanceChangeRequest.put("amount", amount);
+        return balanceChangeRequest;
+    }
+
+    @Value("${app.security.admin-token}")
+    private String token;
+
     @Test
-    void transfer() throws Exception {
-        String base64Encoded = autorisationUser(USERNAME_1, PASSWORD_1DECODE);
+    void getUserAccount() throws Exception {
+        mockMvc.perform(get("/account/{id}", 1)
+                        .header(ADMIN_KEY, token))
+                .andExpect(status().isForbidden());
+    }
 
-        JSONObject transferRequest1 = new JSONObject();
-        transferRequest1.put("fromAccountId", 1);
-        transferRequest1.put("toUserId", 2);
-        transferRequest1.put("toAccountId", 4);
-        transferRequest1.put("amount", 5000);
+    @Test
+    void depositToAccount() throws Exception {
+        Long accountRUBuser1 = getAccountIdByUsernameAndCurrency(USERNAME_1,AccountCurrency.RUB);
+        JSONObject balanceChangeRequest = balanceChangeRequest(5000L);
 
-        mockMvc.perform(post("/transfer")
-                        .header(HttpHeaders.AUTHORIZATION, "Basic " + base64Encoded)
+        mockMvc.perform(post("/account/deposit/{id}", accountRUBuser1)
+                        .header(ADMIN_KEY, token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(transferRequest1.toString()))
-                .andExpect(status().isOk());
+                        .content(balanceChangeRequest.toString()))
+                .andExpect(status().isForbidden());
+    }
+    @Test
+    void withdrawFromAccount() throws Exception {
+        Long accountRUBuser1 = getAccountIdByUsernameAndCurrency(USERNAME_1,AccountCurrency.RUB);
+        JSONObject balanceChangeRequest = balanceChangeRequest(6000L);
 
-        JSONObject transferRequest2 = new JSONObject();
-        transferRequest2.put("fromAccountId", 1);
-        transferRequest2.put("toUserId", 2);
-        transferRequest2.put("toAccountId", 5); //счет в другой валюте
-        transferRequest2.put("amount", 5000);
-
-        mockMvc.perform(post("/transfer")
-                        .header(HttpHeaders.AUTHORIZATION, "Basic " + base64Encoded)
+        mockMvc.perform(post("/account/withdraw/{id}", accountRUBuser1)
+                        .header(ADMIN_KEY, token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(transferRequest2.toString()))
-                .andExpect(status().isBadRequest());
-
-        JSONObject transferRequest3 = new JSONObject();
-        transferRequest3.put("fromAccountId", 4); //счет неавторизованного пользователя
-        transferRequest3.put("toUserId", 1);
-        transferRequest3.put("toAccountId", 1);
-        transferRequest3.put("amount", 5000);
-
-        mockMvc.perform(post("/transfer")
-                        .header(HttpHeaders.AUTHORIZATION, "Basic " + base64Encoded)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(transferRequest3.toString()))
-                .andExpect(status().isNotFound());
-
-        JSONObject transferRequest4 = new JSONObject();
-        transferRequest4.put("fromAccountId", 1);
-        transferRequest4.put("toUserId", 2);
-        transferRequest4.put("toAccountId", 4);
-        transferRequest4.put("amount", 10000); //недостаточная сумма на счете
-
-        mockMvc.perform(post("/transfer")
-                        .header(HttpHeaders.AUTHORIZATION, "Basic " + base64Encoded)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(transferRequest4.toString()))
-                .andExpect(status().isBadRequest());
+                        .content(balanceChangeRequest.toString()))
+                .andExpect(status().isForbidden());
     }
 }
